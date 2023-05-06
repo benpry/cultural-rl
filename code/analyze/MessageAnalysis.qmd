@@ -1,0 +1,118 @@
+---
+title: "Message Analysis"
+author: "Ben Prystawski"
+date: "2023-01-25"
+output: html_document
+---
+
+```{r imports}
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(brms)
+library(lme4)
+theme_set(theme_tufte())
+```
+
+```{r load_data}
+df <- read_csv(here("data/model_data_all_experimental_tasks.csv")) |>
+  mutate(
+    channel_capacity = ifelse(is.na(channel_capacity), "unlimited", channel_capacity),
+    can_abstract = ifelse(channel_capacity == "unlimited", "false", ifelse(can_abstract == 1, "true", "false"))
+  ) |>
+  mutate(
+    chain_pos = as.integer(chain_pos),
+    channel_capacity = factor(channel_capacity),
+    can_abstract = as.factor(can_abstract),
+  )
+```
+
+```{r adj_corr}
+df_adj <- df |>
+  group_by(game_idx, chain_idx, chain_pos, channel_capacity, can_abstract) |>
+  summarize(mean_score = mean(score)) |>
+  group_by(game_idx, chain_idx, channel_capacity, can_abstract) |>
+  arrange(chain_pos) |>
+  mutate(next_score = lead(mean_score)) |>
+  ungroup()
+```
+
+```{r test_correlation}
+df_corrs = df_adj |>
+  filter(chain_pos < 9) |>
+  group_by(chain_pos, channel_capacity, can_abstract) |>
+  summarize(
+      corr = cor.test(mean_score, next_score)$estimate,
+      corr_lower = cor.test(mean_score, next_score)$conf.int[1],
+      corr_upper = cor.test(mean_score, next_score)$conf.int[2]
+      ) 
+```
+
+```{r corr_plot}
+df_corrs |>
+  filter(channel_capacity %in% c(5, 10)) |>
+  mutate(
+    channel_capacity = sprintf("capacity: %s", channel_capacity),
+    channel_capacity = factor(channel_capacity, levels=c("capacity: 5", "capacity: 10"))
+    ) %>%
+  ggplot(
+    data = .,
+    mapping = aes(x = chain_pos, y = corr, color = can_abstract)
+  ) +
+  facet_wrap(~channel_capacity) +
+  geom_hline(yintercept=0, linetype="dashed") +
+  geom_point(position=position_dodge(0.3)) +
+  geom_errorbar(
+    aes(ymin=corr_lower, ymax=corr_upper),
+    width=0,
+    position=position_dodge(0.3)
+  ) + 
+  geom_line(position=position_dodge(0.3)) +
+  labs(
+    x = "chain position",
+    y = "correlation between adjacent scores",
+    color = "abstraction"
+  ) +
+  scale_color_solarized() +
+  theme(text=element_text(size=18))
+ggsave(here("figures/adj-corrs.pdf"), bg="white")
+```
+
+```{r abstraction_vs_performance}
+df |>
+  filter(can_abstract == "true" & channel_capacity %in% c(5, 10)) |>
+  mutate(
+    channel_capacity = sprintf("capacity: %s", channel_capacity),
+    channel_capacity = factor(channel_capacity, levels=c("capacity: 5", "capacity: 10")),
+    prop_abstract = received_msg_n_abstract_items / received_msg_n_items
+    ) |>
+  group_by(across(c(-score, -episode))) |>
+  summarize(mean_score = mean(score)) %>%
+  ggplot(
+    data = .,
+    mapping = aes(x = prop_abstract,  y = mean_score)
+  ) +
+  facet_wrap(~channel_capacity) +
+  geom_jitter(width=.02, height=.02, alpha=0.007) +
+  geom_smooth(method="glm", method.args=list(family = "binomial")) +
+  scale_y_continuous(limits=c(-0.02,1.02)) +
+  labs(
+    x = "Proportion of abstract statements",
+    y = "p(goal achieved)"
+  ) +
+  scale_color_solarized() +
+  theme(text=element_text(size=18))
+ggsave(here("figures/score_by_prop_abstract.pdf"), bg="white")
+```
+
+```{r abstract_message_models}
+df_with_prop_abstract <- df |>
+  filter(channel_capacity %in% c(5, 10)) |>
+  mutate(prop_abstract = received_msg_n_abstract_items / received_msg_n_items)
+model_cc10 <- brm(score ~ prop_abstract, family=bernoulli(), data=df_with_prop_abstract |> filter(channel_capacity == 10))
+model_cc10 <- glm(score ~ prop_abstract, family=binomial, data=df_with_prop_abstract |> filter(channel_capacity == 10))
+model_cc5 <- glm(score ~ prop_abstract, family=binomial, data=df_with_prop_abstract |> filter(channel_capacity == 5))
+summary(model_cc10)
+summary(model_cc5)
+```
+

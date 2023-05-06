@@ -1,0 +1,129 @@
+---
+title: "EpisodicAnalysis"
+author: "Ben Prystawski"
+format: html
+---
+
+# Imports
+
+```{r imports}
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(viridis)
+```
+
+# Load data
+
+```{r load_data}
+df <- read_csv(here("data/model_data_all_experimental_tasks.csv")) |>
+  mutate(
+    channel_capacity = ifelse(is.na(channel_capacity), "unlimited", channel_capacity),
+    can_abstract = ifelse(channel_capacity == "unlimited", "false", ifelse(can_abstract == 1, "true", "false"))
+  ) |>
+  mutate(
+    chain_pos = as.integer(chain_pos),
+    channel_capacity = factor(channel_capacity),
+    can_abstract = as.factor(can_abstract),
+    score = score
+  )
+```
+
+# Plot scores
+
+```{r plot_scores}
+df |>
+  mutate(channel_capacity = factor(channel_capacity, levels=c(1, 3, 5, 7, 10, "unlimited"))) %>%
+  ggplot(
+    data = .,
+    mapping = aes(x = chain_pos, y = score, color = channel_capacity, group = interaction(channel_capacity, can_abstract))
+  ) +
+  stat_summary(fun = mean, geom = "line", aes(linetype = can_abstract)) +
+  stat_summary(fun.data = mean_cl_boot, geom="pointrange") +
+  scale_x_continuous(breaks = 0:max(df$chain_pos)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Probability of goal achievement by generation",
+    x = "chain position",
+    y = "p(goal achieved)",
+    color = "capacity",
+    linetype = "abstraction"
+  ) +
+  theme_tufte() +
+  scale_color_viridis(discrete=T, direction=-1) +
+  theme(text=element_text(size=18))
+  
+ggsave(here("figures/simulated_chain_scores.pdf"), bg="white")
+```
+
+```{r sawtooth_plot}
+df |>
+  filter(chain_pos < 5 & channel_capacity %in% c(1, 5, 10)) |>
+  mutate(
+    position = chain_pos * (max(episode) + 1) + episode,
+    channel_capacity = sprintf("capacity: %s", channel_capacity),
+    channel_capacity = factor(channel_capacity, levels = c("capacity: 1", "capacity: 5", "capacity: 10"))
+    ) %>%
+  ggplot(
+    data = .,
+    mapping = aes(x = position, y = score, color = can_abstract, group = can_abstract)
+  ) +
+  facet_wrap(~ channel_capacity) +
+    geom_vline(xintercept=5, linetype="dotted") + geom_vline(xintercept=10, linetype="dotted") +
+  geom_vline(xintercept=15, linetype="dotted") + geom_vline(xintercept=20, linetype="dotted") +
+  # geom_point(alpha = 0.1, color = "grey", position = position_jitter(width=0.2, height=0.05)) +
+  stat_summary(fun = mean, geom = "line") +
+  stat_summary(fun.data = mean_cl_boot, geom="pointrange") +
+  scale_x_continuous(limits = c(0, 24)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Probability of goal achievement by epsiode",
+    x = "overall episode number",
+    y = "p(goal achieved)",
+    color = "abstraction"
+  ) +
+  theme_tufte() +
+  scale_color_solarized() +
+  theme(text=element_text(size=16))
+
+ggsave(here("figures/all_episode_plot.pdf"), width=12, height=4, bg="white")
+```
+
+```{r prop_abstract_table}
+df |>
+  filter(can_abstract == "true") |>
+  mutate(prop_abstract = received_msg_n_abstract_items / received_msg_n_items) |>
+  group_by(chain_pos, channel_capacity) |>
+  summarize(prop_abstract = mean(prop_abstract)) |>
+  arrange(channel_capacity, chain_pos)
+```
+
+```{r prop_abstract_plots}
+df |>
+  filter(can_abstract == "true") |>
+  mutate(prop_abstract = received_msg_n_abstract_items / received_msg_n_items) %>%
+  ggplot(
+    data = .,
+    mapping = aes(x = chain_pos, y = prop_abstract, color = channel_capacity)
+  ) +
+  stat_summary(fun = mean, geom = "line", linewidth = 2) +
+  stat_summary(fun.data = mean_cl_boot, geom="pointrange") +
+  scale_x_continuous(breaks = 0:max(df$chain_pos)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Proportion of abstract statements in messages",
+    x = "chain position",
+    y = "proportion of abstract statements",
+    color = "channel capacity",
+  ) +
+  theme_tufte()
+ggsave(here("figures/model_prop_abstract.pdf"), bg="white")
+```
+
+```{r prop_abstract_score_corr}
+model <- df |>
+  filter(can_abstract == 1 & channel_capacity == 5) |>
+  mutate(prop_abstract = received_msg_n_abstract_items / received_msg_n_items) %>%
+  brm(score | trials(5)  ~ 1 + prop_abstract, data = ., family = binomial())
+summary(model)
+```

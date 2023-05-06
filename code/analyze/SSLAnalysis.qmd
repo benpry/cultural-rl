@@ -1,0 +1,46 @@
+---
+title: "Selective Social Learning Analysis"
+author: "Ben Prystawski"
+date: "2023-01-24"
+output: html_document
+---
+
+```{r imports}
+library(tidyverse)
+library(here)
+library(ggthemes)
+library(scales)
+```
+
+```{r load_data}
+df = read_csv(here("data/ssl_scores.csv"))
+```
+
+```{r plot_scores}
+df |>
+  filter(channel_capacity == 10) |>
+  mutate(
+    ssl_setting = ifelse(ssl_setting == "demonstration", "demo", ssl_setting),
+    population_size = sprintf("population size: %s", population_size)
+    ) %>%
+  ggplot(
+    data = .,
+    mapping = aes(x = generation, y = score, color = ssl_setting)
+  ) +
+  facet_wrap(~ population_size) + 
+  stat_summary(fun = mean, geom = "line") +
+  stat_summary(fun.data = mean_cl_boot, geom="pointrange") +
+  # scale_x_continuous(breaks = 0:max(df$chain_pos)) +
+  scale_y_continuous(limits=c(0,1)) +
+  scale_x_continuous(breaks=pretty_breaks()) +
+  labs(
+    x = "chain position",
+    y = "p(goal achieved)",
+    color = "SSL"
+  ) +
+  theme_tufte() +
+  theme(text = element_text(size=18)) +
+  scale_color_solarized()
+  
+ggsave(here("figures/ssl_scores.pdf"), bg="white")
+```
